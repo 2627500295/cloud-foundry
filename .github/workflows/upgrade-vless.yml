@@ -1,0 +1,83 @@
+name: UPGRADE
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  push:
+    branches: 
+    - master
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install Cloud Foundry CLI
+      run: |
+        curl -fsSL "https://packages.cloudfoundry.org/stable?release=linux64-binary&source=github&version=v7" | tar -zxC /tmp
+        sudo mv /tmp/cf /usr/local/bin
+        sudo mv /tmp/cf7 /usr/local/bin
+        cf version
+        
+    - name: Login IBM Cloud
+      run: |
+        cf login -a ${{secrets.IBM_ENDPOINT}} -u ${{secrets.IBM_USERNAME}} -p ${{secrets.IBM_PASSWORD}}
+
+    - name: Download Latest Release
+      run: |
+        wget -q https://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-64.zip
+        unzip v2ray-linux-64.zip v2ray v2ctl
+        rm -rf v2ray-linux-64.zip
+        chmod 700 v2ray v2ctl
+        
+    - name: Write configuration
+      run: |
+        cat > config.json << EOF
+        {
+          "log": {
+            "access": "none"
+          },
+          "inbounds": [
+            {
+              "port": 8080,
+              "protocol": "vless",
+              "settings": {
+                "decryption": "none",
+                "clients": [
+                  {
+                    "id": "${{secrets.APP_UUID}}"
+                  }
+                ]
+              },
+              "streamSettings": {
+                "network":"ws",
+                "wsSettings": {
+                  "path": "${{secrets.APP_WSPATH}}"
+                }
+              }
+            }
+          ],
+          "outbounds": [
+            {
+              "protocol": "freedom",
+              "settings": {}
+            }
+          ]
+        }
+        EOF
+
+    - name: Write manifest
+      run: |
+        cat > manifest.yml << EOF
+        applications:
+        - name: ${{secrets.IBM_APPNAME}}
+          memory: $(cf app '${{secrets.IBM_APPNAME}}' | grep 'memory usage' | awk '{print $3}')
+          random-route: true
+          command: ./v2ray
+          buildpacks:	
+          - binary_buildpack
+        EOF
+        
+    - name: Push
+      run: |
+        cf push
